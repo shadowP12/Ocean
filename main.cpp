@@ -1,192 +1,210 @@
-#include <vector>
+#include "OceanDefine.h"
+
+#include <Blast/Gfx/GfxDevice.h>
+#include <Blast/Gfx/Vulkan/VulkanDevice.h>
+#include <Blast/Utility/ShaderCompiler.h>
+#include <Blast/Utility/VulkanShaderCompiler.h>
+
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3.h>
+#include <GLFW/glfw3native.h>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm.hpp>
+#include <gtx/quaternion.hpp>
+#include <gtc/matrix_transform.hpp>
+
 #include <iostream>
-#include <ccomplex>
+#include <fstream>
+#include <sstream>
 
-#define PI 3.1415926
+static std::string ProjectDir(PROJECT_DIR);
 
-void DFT1D(std::vector<std::complex<float>>& in, std::vector<std::complex<float>>& out, int N) {
-    for (int k = 0; k < N; ++k) {
-        std::complex<float> X;
-        for (int n = 0; n < N; ++n) {
-            float real = X.real();
-            float imag = X.imag();
+static std::string ReadFileData(const std::string& path) {
+    std::istream* stream = &std::cin;
+    std::ifstream file;
 
-            real += in[n].real() * cos(2 * PI * n * k / N);
-            imag -= in[n].real() * sin(2 * PI * n * k / N);
-
-            X.real(real);
-            X.imag(imag);
-        }
-        out[k] = X;
+    file.open(path, std::ios_base::binary);
+    stream = &file;
+    if (file.fail()) {
+        BLAST_LOGW("cannot open input file %s \n", path.c_str());
+        return std::string("");
     }
+    return std::string((std::istreambuf_iterator<char>(*stream)), std::istreambuf_iterator<char>());
 }
 
-void DFT2D(std::vector<std::complex<float>>& in, std::vector<std::complex<float>>& out, int N, int M) {
-    for (int u = 0; u < M; ++u) {
-        for (int v = 0; v < N; ++v) {
-            std::complex<float> F;
-            for (int m = 0; m < M; ++m) {
-                for (int n = 0; n < N; ++n) {
-                    float real = F.real();
-                    float imag = F.imag();
+static std::pair<blast::GfxShader*, blast::GfxShader*> CompileShaderProgram(const std::string& vs_path, const std::string& fs_path);
 
-                    real += in[n * N + m].real() * cos(2 * 3.1415926 * ((u * m / M) + (v * n / N)));
-                    imag -= in[n * N + m].real() * sin(2 * 3.1415926 * ((u * m / M) + (v * n / N)));
+static blast::GfxShader* CompileComputeShader(const std::string& cs_path);
 
-                    F.real(real);
-                    F.imag(imag);
-                }
-            }
-            out[v * N + u] = F;
-        }
-    }
-}
+static void RefreshSwapchain(void* window, uint32_t width, uint32_t height);
 
-struct LookUp {
-    int j1, j2;
-    float wr, wi;
-};
+static void CursorPositionCallback(GLFWwindow* window, double pos_x, double pos_y);
 
-int BitReverse(int i, int size) {
-    int j = i;
-    int Sum = 0;
-    int W = 1;
-    int M = size / 2;
-    while (M != 0)
-    {
-        j = ((i & M) > M - 1) ? 1 : 0;
-        Sum += j * W;
-        W *= 2;
-        M /= 2;
-    }
-    return Sum;
-}
+static void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
 
-void FFT1D(std::complex<float>* in, std::complex<float>* out, int N) {
-    int size = N;
-    int passes = (int)(log(size) / log(2));
-    LookUp* butterfly_lookup_table = new LookUp[size * passes];
-    for (int i = 0; i < passes; i++) {
-        int blocks = (int)pow(2, passes - 1 - i);
-        int inputs = (int)pow(2, i);
+static void MouseScrollCallback(GLFWwindow* window, double offset_x, double offset_y);
 
-        for (int j = 0; j < blocks; j++){
-            for (int k = 0; k < inputs; k++) {
-                int i1, i2, j1, j2;
-                if (i == 0) {
-                    i1 = j * inputs * 2 + k;
-                    i2 = j * inputs * 2 + inputs + k;
-                    j1 = BitReverse(i1, size);
-                    j2 = BitReverse(i2, size);
-                } else {
-                    i1 = j * inputs * 2 + k;
-                    i2 = j * inputs * 2 + inputs + k;
-                    j1 = i1;
-                    j2 = i2;
-                }
+blast::ShaderCompiler* g_shader_compiler = nullptr;
+blast::GfxDevice* g_device = nullptr;
+blast::GfxSwapChain* g_swapchain = nullptr;
 
-                float wr = cos(2.0f * PI * (float)(k * blocks) / size);
-                float wi = -sin(2.0f * PI * (float)(k * blocks) / size);
+blast::SampleCount g_sample_count = blast::SAMPLE_COUNT_4;
 
-                int offset1 = (i1 + i * size);
-                butterfly_lookup_table[offset1].j1 = j1;
-                butterfly_lookup_table[offset1].j2 = j2;
-                butterfly_lookup_table[offset1].wr = wr;
-                butterfly_lookup_table[offset1].wi = wi;
-
-                int offset2 = (i2 + i * size);
-                butterfly_lookup_table[offset2].j1 = j1;
-                butterfly_lookup_table[offset2].j2 = j2;
-                butterfly_lookup_table[offset2].wr = -wr;
-                butterfly_lookup_table[offset2].wi = -wi;
-            }
-        }
-    }
-
-    std::complex<float>* temp_data0 = new std::complex<float>[size];
-    std::complex<float>* temp_data1 = new std::complex<float>[size];
-
-    for (int i = 0; i < size; ++i) {
-        temp_data0[i].real(in[i].real());
-        temp_data0[i].imag(in[i].imag());
-    }
-
-    std::complex<float>* datas[] = {temp_data0, temp_data1};
-    int read_idx = 0;
-    int write_idx = 0;
-    for (int i = 0; i < passes; i++) {
-        read_idx = i % 2;
-        write_idx = (i + 1) % 2;
-        std::complex<float>* read = datas[read_idx];
-        std::complex<float>* write = datas[write_idx];
-
-        for (int j = 0; j < size; ++j) {
-            int bft_idx = j + (i * size);
-            int j1, j2;
-            float wr, wi;
-            j1 = butterfly_lookup_table[bft_idx].j1;
-            j2 = butterfly_lookup_table[bft_idx].j2;
-            wr = butterfly_lookup_table[bft_idx].wr;
-            wi = butterfly_lookup_table[bft_idx].wi;
-
-            write[j].real(read[j1].real() + wr * read[j2].real() - wi * read[j2].imag());
-            write[j].imag(read[j1].imag() + wi * read[j2].real() + wr * read[j2].imag());
-        }
-    }
-
-    for (int i = 0; i < size; ++i) {
-        out[i].real(datas[write_idx][i].real());
-        out[i].imag(datas[write_idx][i].imag());
-    }
-
-    delete [] temp_data0;
-    delete [] temp_data1;
-    delete [] butterfly_lookup_table;
-}
+struct Camera {
+    glm::vec3 position = glm::vec3(0.0f, 0.0f, 0.0f);
+    glm::vec3 front = glm::vec3(0.0f, 0.0f, -1.0f);
+    glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
+    glm::vec3 right = glm::vec3(1.0f, 0.0f, 0.0f);
+    glm::vec2 start_point = glm::vec2(-1.0f, -1.0f);
+    float yaw = -90.0f;
+    float pitch = 0.0f;
+    bool grabbing = false;
+} camera;
 
 int main() {
-    // test 1d dft
-    {
-        printf("DFT1D : \n");
-        std::vector<std::complex<float>> in(4);
-        std::vector<std::complex<float>> out(4);
+    g_shader_compiler = new blast::VulkanShaderCompiler();
 
-        in[0].real(8.0);
-        in[1].real(4.0);
-        in[2].real(8.0);
-        in[3].real(0.0);
+    g_device = new blast::VulkanDevice();
 
-        DFT1D(in, out, 4);
+    glfwInit();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    GLFWwindow* window = glfwCreateWindow(800, 600, "Lightmapper", nullptr, nullptr);
+    glfwSetCursorPosCallback(window, CursorPositionCallback);
+    glfwSetMouseButtonCallback(window, MouseButtonCallback);
+    glfwSetScrollCallback(window, MouseScrollCallback);
 
-        for (int i = 0; i < 4; ++i) {
-            printf("%d  %f  %f \n", i, out[i].real(), out[i].imag());
-            printf("amplitude: %f\n", out[i].real());
-            printf("phase: %f\n", out[i].imag());
-        }
-    }
+    int frame_width = 0, frame_height = 0;
+    while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
+        int window_width, window_height;
+        glfwGetWindowSize(window, &window_width, &window_height);
 
-    // test 1d fft
-    {
-        printf("FFT1D : \n");
-
-        std::complex<float>* in = new std::complex<float>[4];
-        std::complex<float>* out = new std::complex<float>[4];
-
-        in[0].real(-1.0);
-        in[1].real(2.0);
-        in[2].real(3.0);
-        in[3].real(4.0);
-
-        FFT1D(in, out, 4);
-
-        for (int i = 0; i < 4; ++i) {
-            printf("%d  %f  %f \n", i, out[i].real(), out[i].imag());
-            printf("amplitude: %f\n", out[i].real());
-            printf("phase: %f\n", out[i].imag());
+        if (window_width == 0 || window_height == 0) {
+            continue;
         }
 
-        delete [] in;
-        delete [] out;
+        if (frame_width != window_width || frame_height != window_height) {
+            frame_width = window_width;
+            frame_height = window_height;
+            RefreshSwapchain(glfwGetWin32Window(window), frame_width, frame_height);
+        }
+
+        blast::GfxCommandBuffer* cmd = g_device->RequestCommandBuffer(blast::QUEUE_GRAPHICS);
+
+        g_device->RenderPassBegin(cmd, g_swapchain);
+        g_device->RenderPassEnd(cmd);
+
+        g_device->SubmitAllCommandBuffer();
     }
+    glfwDestroyWindow(window);
+    glfwTerminate();
+
+    g_device->DestroySwapChain(g_swapchain);
+
+    SAFE_DELETE(g_device);
+    SAFE_DELETE(g_shader_compiler);
+
     return 0;
+}
+
+void RefreshSwapchain(void* window, uint32_t width, uint32_t height) {
+    blast::GfxSwapChainDesc swapchain_desc;
+    swapchain_desc.window = window;
+    swapchain_desc.width = width;
+    swapchain_desc.height = height;
+    swapchain_desc.clear_color[0] = 1.0f;
+    g_swapchain = g_device->CreateSwapChain(swapchain_desc, g_swapchain);
+}
+
+static std::pair<blast::GfxShader*, blast::GfxShader*> CompileShaderProgram(const std::string& vs_path, const std::string& fs_path) {
+    blast::GfxShader* vert_shader = nullptr;
+    blast::GfxShader* frag_shader = nullptr;
+    {
+        blast::ShaderCompileDesc compile_desc;
+        compile_desc.code = ReadFileData(vs_path);
+        compile_desc.stage = blast::SHADER_STAGE_VERT;
+        blast::ShaderCompileResult compile_result = g_shader_compiler->Compile(compile_desc);
+        blast::GfxShaderDesc shader_desc;
+        shader_desc.stage = blast::SHADER_STAGE_VERT;
+        shader_desc.bytecode = compile_result.bytes.data();
+        shader_desc.bytecode_length = compile_result.bytes.size() * sizeof(uint32_t);
+        vert_shader = g_device->CreateShader(shader_desc);
+    }
+
+    {
+        blast::ShaderCompileDesc compile_desc;
+        compile_desc.code = ReadFileData(fs_path);
+        compile_desc.stage = blast::SHADER_STAGE_FRAG;
+        blast::ShaderCompileResult compile_result = g_shader_compiler->Compile(compile_desc);
+        blast::GfxShaderDesc shader_desc;
+        shader_desc.stage = blast::SHADER_STAGE_FRAG;
+        shader_desc.bytecode = compile_result.bytes.data();
+        shader_desc.bytecode_length = compile_result.bytes.size() * sizeof(uint32_t);
+        frag_shader = g_device->CreateShader(shader_desc);
+    }
+
+    return std::make_pair(vert_shader, frag_shader);
+}
+
+static blast::GfxShader* CompileComputeShader(const std::string& cs_path) {
+    blast::GfxShader* comp_shader = nullptr;
+    blast::ShaderCompileDesc compile_desc;
+    compile_desc.code = ReadFileData(cs_path);
+    compile_desc.stage = blast::SHADER_STAGE_COMP;
+    blast::ShaderCompileResult compile_result = g_shader_compiler->Compile(compile_desc);
+    blast::GfxShaderDesc shader_desc;
+    shader_desc.stage = blast::SHADER_STAGE_COMP;
+    shader_desc.bytecode = compile_result.bytes.data();
+    shader_desc.bytecode_length = compile_result.bytes.size() * sizeof(uint32_t);
+    comp_shader = g_device->CreateShader(shader_desc);
+    return comp_shader;
+}
+
+static void CursorPositionCallback(GLFWwindow* window, double pos_x, double pos_y) {
+    if (!camera.grabbing) {
+        return;
+    }
+
+    glm::vec2 offset = camera.start_point - glm::vec2(pos_x, pos_y);
+    camera.start_point = glm::vec2(pos_x, pos_y);
+
+    camera.yaw -= offset.x * 0.1f;
+    camera.pitch += offset.y * 0.1f;
+    glm::vec3 front;
+    front.x = cos(glm::radians(camera.yaw)) * cos(glm::radians(camera.pitch));
+    front.y = sin(glm::radians(camera.pitch));
+    front.z = sin(glm::radians(camera.yaw)) * cos(glm::radians(camera.pitch));
+    camera.front = glm::normalize(front);
+    camera.right = glm::normalize(glm::cross(camera.front, glm::vec3(0, 1, 0)));
+    camera.up = glm::normalize(glm::cross(camera.right, camera.front));
+}
+
+static void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+    double x, y;
+    glfwGetCursorPos(window, &x, &y);
+    switch (action) {
+        case 0:
+            // Button Up
+            if (button == 1) {
+                camera.grabbing = false;
+            }
+            break;
+        case 1:
+            // Button Down
+            if (button == 1) {
+                camera.grabbing = true;
+                camera.start_point = glm::vec2(x, y);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+static void MouseScrollCallback(GLFWwindow* window, double offset_x, double offset_y) {
+    camera.position += camera.front * (float)offset_y * 0.1f;
 }
