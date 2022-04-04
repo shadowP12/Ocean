@@ -1,0 +1,16 @@
+#version 450 core
+
+layout (local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 2000, rgba32f) uniform image2D source_texture;
+layout(binding = 2001, rg32f) uniform image2D dest_texture;
+
+float Luminance(vec3 rgb) {
+    return dot(rgb, vec3(0.2125, 0.7154, 0.0721));
+}
+
+void main() {
+    vec4 source = imageLoad(source_texture, ivec2(gl_GlobalInvocationID.xy));
+    float luminance = Luminance(source.rgb);
+    imageStore(dest_texture, ivec2(gl_GlobalInvocationID.xy), vec4(luminance, 0.0, 0.0, 0.0));
+}

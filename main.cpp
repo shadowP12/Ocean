@@ -1,5 +1,6 @@
 #include "OceanDefine.h"
 
+#include <Blast/Gfx/GfxDefine.h>
 #include <Blast/Gfx/GfxDevice.h>
 #include <Blast/Gfx/Vulkan/VulkanDevice.h>
 #include <Blast/Utility/ShaderCompiler.h>
@@ -52,7 +53,40 @@ blast::ShaderCompiler* g_shader_compiler = nullptr;
 blast::GfxDevice* g_device = nullptr;
 blast::GfxSwapChain* g_swapchain = nullptr;
 
+blast::GfxTexture* scene_color_tex = nullptr;
+blast::GfxTexture* scene_depth_tex = nullptr;
+blast::GfxTexture* resolve_tex = nullptr;
+blast::GfxShader* scene_vert_shader = nullptr;
+blast::GfxShader* scene_frag_shader = nullptr;
+blast::GfxRenderPass* scene_renderpass = nullptr;
+blast::GfxPipeline* scene_pipeline = nullptr;
+
+blast::GfxShader* blit_vert_shader = nullptr;
+blast::GfxShader* blit_frag_shader = nullptr;
+blast::GfxPipeline* blit_pipeline = nullptr;
+
+blast::GfxShader* copy_shader = nullptr;
+blast::GfxShader* luminance_shader = nullptr;
+blast::GfxShader* fft_shader = nullptr;
+
+blast::GfxBuffer* g_quad_index_buffer = nullptr;
+blast::GfxBuffer* g_quad_vertex_buffer = nullptr;
+
+blast::GfxSampler* linear_sampler = nullptr;
+blast::GfxSampler* nearest_sampler = nullptr;
+
+blast::GfxTexture* test_texture = nullptr;
+blast::GfxTexture* result_texture = nullptr;
+
+blast::GfxBuffer* object_ub = nullptr;
+
 blast::SampleCount g_sample_count = blast::SAMPLE_COUNT_4;
+
+struct ObjectUniforms {
+    glm::mat4 model_matrix;
+    glm::mat4 view_matrix;
+    glm::mat4 proj_matrix;
+};
 
 struct Camera {
     glm::vec3 position = glm::vec3(0.0f, 0.0f, 0.0f);
@@ -65,14 +99,120 @@ struct Camera {
     bool grabbing = false;
 } camera;
 
+float quad_vertices[] = {
+        -1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+        1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f,
+        1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,
+        -1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f
+};
+
+unsigned int quad_indices[] = {
+        0, 1, 2, 2, 3, 0
+};
+
 int main() {
     g_shader_compiler = new blast::VulkanShaderCompiler();
 
     g_device = new blast::VulkanDevice();
 
+    // load shader
+    {
+        auto shaders = CompileShaderProgram(ProjectDir + "/Resources/Shaders/blit.vert", ProjectDir + "/Resources/Shaders/blit.frag");
+        blit_vert_shader = shaders.first;
+        blit_frag_shader = shaders.second;
+    }
+    {
+        auto shaders = CompileShaderProgram(ProjectDir + "/Resources/Shaders/scene.vert", ProjectDir + "/Resources/Shaders/scene.frag");
+        scene_vert_shader = shaders.first;
+        scene_frag_shader = shaders.second;
+    }
+    {
+        copy_shader = CompileComputeShader(ProjectDir + "/Resources/Shaders/copy.comp");
+    }
+    {
+        luminance_shader = CompileComputeShader(ProjectDir + "/Resources/Shaders/luminance.comp");
+    }
+
+    blast::GfxCommandBuffer* copy_cmd = g_device->RequestCommandBuffer(blast::QUEUE_COPY);
+
+    // load quad buffers
+    {
+        blast::GfxBufferDesc buffer_desc;
+        buffer_desc.size = sizeof(Vertex) * 4;
+        buffer_desc.mem_usage = blast::MEMORY_USAGE_GPU_ONLY;
+        buffer_desc.res_usage = blast::RESOURCE_USAGE_VERTEX_BUFFER;
+        g_quad_vertex_buffer = g_device->CreateBuffer(buffer_desc);
+        {
+            g_device->UpdateBuffer(copy_cmd, g_quad_vertex_buffer, quad_vertices, sizeof(Vertex) * 4);
+            blast::GfxBufferBarrier barrier;
+            barrier.buffer = g_quad_vertex_buffer;
+            barrier.new_state = blast::RESOURCE_STATE_SHADER_RESOURCE;
+            g_device->SetBarrier(copy_cmd, 1, &barrier, 0, nullptr);
+        }
+
+        buffer_desc.size = sizeof(unsigned int) * 6;
+        buffer_desc.mem_usage = blast::MEMORY_USAGE_CPU_TO_GPU;
+        buffer_desc.res_usage = blast::RESOURCE_USAGE_INDEX_BUFFER;
+        g_quad_index_buffer = g_device->CreateBuffer(buffer_desc);
+        {
+            g_device->UpdateBuffer(copy_cmd, g_quad_index_buffer, quad_indices, sizeof(unsigned int) * 6);
+            blast::GfxBufferBarrier barrier;
+            barrier.buffer = g_quad_index_buffer;
+            barrier.new_state = blast::RESOURCE_STATE_SHADER_RESOURCE;
+            g_device->SetBarrier(copy_cmd, 1, &barrier, 0, nullptr);
+        }
+    }
+
+    blast::GfxSamplerDesc sampler_desc = {};
+    linear_sampler = g_device->CreateSampler(sampler_desc);
+    sampler_desc.min_filter = blast::FILTER_NEAREST;
+    sampler_desc.mag_filter = blast::FILTER_NEAREST;
+    nearest_sampler = g_device->CreateSampler(sampler_desc);
+
+    {
+        int tex_width, tex_height, tex_channels;
+        std::string image_path = ProjectDir + "/Resources/Textures/test.png";
+        unsigned char* pixels = stbi_load(image_path.c_str(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
+
+        blast::GfxTextureDesc texture_desc;
+        texture_desc.width = tex_width;
+        texture_desc.height = tex_height;
+        texture_desc.format = blast::FORMAT_R8G8B8A8_UNORM;
+        texture_desc.mem_usage = blast::MEMORY_USAGE_GPU_ONLY;
+        texture_desc.res_usage = blast::RESOURCE_USAGE_SHADER_RESOURCE | blast::RESOURCE_USAGE_UNORDERED_ACCESS;
+        test_texture = g_device->CreateTexture(texture_desc);
+        {
+            blast::GfxTextureBarrier barrier;
+            barrier.texture = test_texture;
+            barrier.new_state = blast::RESOURCE_STATE_COPY_DEST;
+            g_device->SetBarrier(copy_cmd, 0, nullptr, 1, &barrier);
+
+            g_device->UpdateTexture(copy_cmd, test_texture, pixels);
+
+            barrier.texture = test_texture;
+            barrier.new_state = blast::RESOURCE_STATE_SHADER_RESOURCE;
+            g_device->SetBarrier(copy_cmd, 0, nullptr, 1, &barrier);
+        }
+        stbi_image_free(pixels);
+
+        texture_desc.format = blast::FORMAT_R32G32_FLOAT;
+        texture_desc.mem_usage = blast::MEMORY_USAGE_GPU_ONLY;
+        texture_desc.res_usage = blast::RESOURCE_USAGE_SHADER_RESOURCE | blast::RESOURCE_USAGE_UNORDERED_ACCESS;
+        result_texture = g_device->CreateTexture(texture_desc);
+    }
+
+    std::vector<ObjectUniforms> object_storages(2);
+    {
+        blast::GfxBufferDesc buffer_desc = {};
+        buffer_desc.size = sizeof(ObjectUniforms) * object_storages.size();
+        buffer_desc.mem_usage = blast::MEMORY_USAGE_GPU_ONLY;
+        buffer_desc.res_usage = blast::RESOURCE_USAGE_UNIFORM_BUFFER;
+        object_ub = g_device->CreateBuffer(buffer_desc);
+    }
+
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(800, 600, "Lightmapper", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(800, 800, "Lightmapper", nullptr, nullptr);
     glfwSetCursorPosCallback(window, CursorPositionCallback);
     glfwSetMouseButtonCallback(window, MouseButtonCallback);
     glfwSetScrollCallback(window, MouseScrollCallback);
@@ -95,13 +235,190 @@ int main() {
 
         blast::GfxCommandBuffer* cmd = g_device->RequestCommandBuffer(blast::QUEUE_GRAPHICS);
 
-        g_device->RenderPassBegin(cmd, g_swapchain);
-        g_device->RenderPassEnd(cmd);
+        // update object ub
+        object_storages[0].model_matrix = glm::mat4(1.0f);
+        object_storages[0].view_matrix = glm::mat4(1.0f);
+        object_storages[0].proj_matrix = glm::mat4(1.0f);
+
+        glm::mat4 view_matrix = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
+
+        float fov = glm::radians(60.0);
+        float aspect = frame_width / (float)frame_height;
+        glm::mat4 proj_matrix = glm::perspective(fov, aspect, 0.1f, 100.0f);
+        proj_matrix[1][1] *= -1;
+
+        object_storages[1].model_matrix = glm::mat4(1.0f);
+        object_storages[1].view_matrix = view_matrix;
+        object_storages[1].proj_matrix = proj_matrix;
+        g_device->UpdateBuffer(cmd, object_ub, object_storages.data(), sizeof(ObjectUniforms) * object_storages.size());
+
+        // test pass
+        {
+            blast::GfxTextureBarrier texture_barriers[2];
+            texture_barriers[0].texture = test_texture;
+            texture_barriers[0].new_state = blast::RESOURCE_STATE_UNORDERED_ACCESS;
+            texture_barriers[1].texture = result_texture;
+            texture_barriers[1].new_state = blast::RESOURCE_STATE_UNORDERED_ACCESS;
+            g_device->SetBarrier(cmd, 0, nullptr, 2, texture_barriers);
+
+            g_device->BindComputeShader(cmd, luminance_shader);
+
+            g_device->BindUAV(cmd, test_texture, 0);
+
+            g_device->BindUAV(cmd, result_texture, 1);
+
+            g_device->Dispatch(cmd, std::max(1u, (uint32_t)(test_texture->desc.width) / 16), std::max(1u, (uint32_t)(test_texture->desc.height) / 16), 1);
+
+            texture_barriers[0].texture = test_texture;
+            texture_barriers[0].new_state = blast::RESOURCE_STATE_SHADER_RESOURCE;
+            texture_barriers[1].texture = result_texture;
+            texture_barriers[1].new_state = blast::RESOURCE_STATE_SHADER_RESOURCE;
+            g_device->SetBarrier(cmd, 0, nullptr, 2, texture_barriers);
+
+        }
+
+        // draw scene
+        {
+            uint32_t texture_barrier_count = 2;
+            blast::GfxTextureBarrier texture_barriers[3];
+            texture_barriers[0].texture = scene_color_tex;
+            texture_barriers[0].new_state = blast::RESOURCE_STATE_RENDERTARGET;
+            texture_barriers[1].texture = scene_depth_tex;
+            texture_barriers[1].new_state = blast::RESOURCE_STATE_DEPTH_WRITE;
+            if (g_sample_count != blast::SAMPLE_COUNT_1) {
+                texture_barriers[2].texture = resolve_tex;
+                texture_barriers[2].new_state = blast::RESOURCE_STATE_COPY_DEST;
+                texture_barrier_count++;
+            }
+            g_device->SetBarrier(cmd, 0, nullptr, texture_barrier_count, texture_barriers);
+
+            g_device->RenderPassBegin(cmd, scene_renderpass);
+
+            blast::Viewport viewport;
+            viewport.x = 0;
+            viewport.y = 0;
+            viewport.w = frame_width;
+            viewport.h = frame_height;
+            g_device->BindViewports(cmd, 1, &viewport);
+
+            blast::Rect rect;
+            rect.left = 0;
+            rect.top = 0;
+            rect.right = frame_width;
+            rect.bottom = frame_height;
+            g_device->BindScissorRects(cmd, 1, &rect);
+
+            g_device->BindPipeline(cmd, scene_pipeline);
+
+            g_device->BindResource(cmd, result_texture, 0);
+
+            g_device->BindSampler(cmd, linear_sampler, 0);
+
+            g_device->BindConstantBuffer(cmd, object_ub, 0, sizeof(ObjectUniforms), 0);
+
+            blast::GfxBuffer* vertex_buffers[] = { g_quad_vertex_buffer };
+            uint64_t vertex_offsets[] = {0};
+            g_device->BindVertexBuffers(cmd, vertex_buffers, 0, 1, vertex_offsets);
+
+            g_device->BindIndexBuffer(cmd, g_quad_index_buffer, blast::IndexType::INDEX_TYPE_UINT32, 0);
+
+            g_device->DrawIndexed(cmd, 6, 0, 0);
+
+            g_device->RenderPassEnd(cmd);
+
+            texture_barrier_count = 2;
+            texture_barriers[0].texture = scene_color_tex;
+            texture_barriers[0].new_state = blast::RESOURCE_STATE_SHADER_RESOURCE;
+            texture_barriers[1].texture = scene_depth_tex;
+            texture_barriers[1].new_state = blast::RESOURCE_STATE_SHADER_RESOURCE;
+            if (g_sample_count != blast::SAMPLE_COUNT_1) {
+                texture_barriers[2].texture = resolve_tex;
+                texture_barriers[2].new_state = blast::RESOURCE_STATE_SHADER_RESOURCE;
+                texture_barrier_count++;
+            }
+            g_device->SetBarrier(cmd, 0, nullptr, texture_barrier_count, texture_barriers);
+        }
+
+        // draw to swapchain
+        {
+            g_device->RenderPassBegin(cmd, g_swapchain);
+
+            g_device->BindPipeline(cmd, blit_pipeline);
+
+            blast::Viewport viewport;
+            viewport.x = 0;
+            viewport.y = 0;
+            viewport.w = frame_width;
+            viewport.h = frame_height;
+            g_device->BindViewports(cmd, 1, &viewport);
+
+            blast::Rect rect;
+            rect.left = 0;
+            rect.top = 0;
+            rect.right = frame_width;
+            rect.bottom = frame_height;
+            g_device->BindScissorRects(cmd, 1, &rect);
+
+            if (g_sample_count != blast::SAMPLE_COUNT_1) {
+                g_device->BindResource(cmd, resolve_tex, 0);
+            } else {
+                g_device->BindResource(cmd, scene_color_tex, 0);
+            }
+
+            g_device->BindSampler(cmd, linear_sampler, 0);
+
+            g_device->BindConstantBuffer(cmd, object_ub, 0, sizeof(ObjectUniforms), 0);
+
+            blast::GfxBuffer* vertex_buffers[] = { g_quad_vertex_buffer };
+            uint64_t vertex_offsets[] = {0};
+            g_device->BindVertexBuffers(cmd, vertex_buffers, 0, 1, vertex_offsets);
+
+            g_device->BindIndexBuffer(cmd, g_quad_index_buffer, blast::IndexType::INDEX_TYPE_UINT32, 0);
+
+            g_device->DrawIndexed(cmd, 6, 0, 0);
+
+            g_device->RenderPassEnd(cmd);
+        }
 
         g_device->SubmitAllCommandBuffer();
     }
     glfwDestroyWindow(window);
     glfwTerminate();
+
+    g_device->DestroyShader(blit_vert_shader);
+    g_device->DestroyShader(blit_frag_shader);
+    g_device->DestroyShader(scene_vert_shader);
+    g_device->DestroyShader(scene_frag_shader);
+    g_device->DestroyShader(copy_shader);
+    g_device->DestroyShader(luminance_shader);
+
+    if (scene_renderpass) {
+        g_device->DestroyTexture(scene_color_tex);
+        g_device->DestroyTexture(scene_depth_tex);
+        if (g_sample_count != blast::SAMPLE_COUNT_1) {
+            g_device->DestroyTexture(resolve_tex);
+        }
+        g_device->DestroyRenderPass(scene_renderpass);
+    }
+
+    if (blit_pipeline) {
+        g_device->DestroyPipeline(blit_pipeline);
+    }
+
+    if (scene_pipeline) {
+        g_device->DestroyPipeline(scene_pipeline);
+    }
+
+    g_device->DestroyBuffer(g_quad_vertex_buffer);
+    g_device->DestroyBuffer(g_quad_index_buffer);
+
+    g_device->DestroySampler(linear_sampler);
+    g_device->DestroySampler(nearest_sampler);
+
+    g_device->DestroyTexture(test_texture);
+    g_device->DestroyTexture(result_texture);
+
+    g_device->DestroyBuffer(object_ub);
 
     g_device->DestroySwapChain(g_swapchain);
 
@@ -118,6 +435,130 @@ void RefreshSwapchain(void* window, uint32_t width, uint32_t height) {
     swapchain_desc.height = height;
     swapchain_desc.clear_color[0] = 1.0f;
     g_swapchain = g_device->CreateSwapChain(swapchain_desc, g_swapchain);
+
+    if (scene_renderpass) {
+        g_device->DestroyTexture(scene_color_tex);
+        g_device->DestroyTexture(scene_depth_tex);
+        if (g_sample_count != blast::SAMPLE_COUNT_1) {
+            g_device->DestroyTexture(resolve_tex);
+        }
+        g_device->DestroyRenderPass(scene_renderpass);
+    }
+    blast::GfxTextureDesc texture_desc = {};
+    texture_desc.width = width;
+    texture_desc.height = height;
+    texture_desc.sample_count = g_sample_count;
+    texture_desc.format = blast::FORMAT_R8G8B8A8_UNORM;
+    texture_desc.mem_usage = blast::MEMORY_USAGE_GPU_ONLY;
+    texture_desc.res_usage = blast::RESOURCE_USAGE_SHADER_RESOURCE | blast::RESOURCE_USAGE_RENDER_TARGET;
+    texture_desc.clear.color[0] = 0.0f;
+    texture_desc.clear.color[1] = 0.0f;
+    texture_desc.clear.color[2] = 0.0f;
+    texture_desc.clear.color[3] = 0.0f;
+    // 默认深度值为1
+    texture_desc.clear.depthstencil.depth = 1.0f;
+    scene_color_tex = g_device->CreateTexture(texture_desc);
+
+    if (g_sample_count != blast::SAMPLE_COUNT_1) {
+        texture_desc.sample_count = blast::SAMPLE_COUNT_1;
+        resolve_tex = g_device->CreateTexture(texture_desc);
+    }
+
+    texture_desc.sample_count = g_sample_count;
+    texture_desc.format = blast::FORMAT_D24_UNORM_S8_UINT;
+    texture_desc.res_usage = blast::RESOURCE_USAGE_SHADER_RESOURCE | blast::RESOURCE_USAGE_DEPTH_STENCIL;
+    scene_depth_tex = g_device->CreateTexture(texture_desc);
+
+    blast::GfxRenderPassDesc renderpass_desc = {};
+    renderpass_desc.attachments.push_back(blast::RenderPassAttachment::RenderTarget(scene_color_tex, -1, blast::LOAD_CLEAR));
+    renderpass_desc.attachments.push_back(
+            blast::RenderPassAttachment::DepthStencil(
+                    scene_depth_tex,
+                    -1,
+                    blast::LOAD_CLEAR,
+                    blast::STORE_STORE
+            )
+    );
+
+    if (g_sample_count != blast::SAMPLE_COUNT_1) {
+        renderpass_desc.attachments.push_back(blast::RenderPassAttachment::Resolve(resolve_tex));
+    }
+    scene_renderpass = g_device->CreateRenderPass(renderpass_desc);
+
+    blast::GfxInputLayout input_layout = {};
+    blast::GfxInputLayout::Element input_element;
+    input_element.semantic = blast::SEMANTIC_POSITION;
+    input_element.format = blast::FORMAT_R32G32B32_FLOAT;
+    input_element.binding = 0;
+    input_element.location = 0;
+    input_element.offset = offsetof(Vertex, pos);
+    input_layout.elements.push_back(input_element);
+
+    input_element.semantic = blast::SEMANTIC_NORMAL;
+    input_element.format = blast::FORMAT_R32G32B32_FLOAT;
+    input_element.binding = 0;
+    input_element.location = 1;
+    input_element.offset = offsetof(Vertex, normal);
+    input_layout.elements.push_back(input_element);
+
+    input_element.semantic = blast::SEMANTIC_TEXCOORD0;
+    input_element.format = blast::FORMAT_R32G32_FLOAT;
+    input_element.binding = 0;
+    input_element.location = 2;
+    input_element.offset = offsetof(Vertex, uv);
+    input_layout.elements.push_back(input_element);
+
+    blast::GfxBlendState blend_state = {};
+    blend_state.rt[0].src_factor = blast::BLEND_ONE;
+    blend_state.rt[0].dst_factor = blast::BLEND_ZERO;
+    blend_state.rt[0].src_factor_alpha = blast::BLEND_ONE;
+    blend_state.rt[0].dst_factor_alpha = blast::BLEND_ZERO;
+
+    blast::GfxDepthStencilState depth_stencil_state = {};
+    depth_stencil_state.depth_test = true;
+    depth_stencil_state.depth_write = true;
+
+    blast::GfxRasterizerState rasterizer_state = {};
+    rasterizer_state.cull_mode = blast::CULL_NONE;
+    rasterizer_state.front_face = blast::FRONT_FACE_CW;
+    rasterizer_state.fill_mode = blast::FILL_SOLID;
+
+    // 创建blit管线
+    {
+        if (blit_pipeline) {
+            g_device->DestroyPipeline(blit_pipeline);
+        }
+
+        blast::GfxPipelineDesc pipeline_desc;
+        pipeline_desc.sc = g_swapchain;
+        pipeline_desc.vs = blit_vert_shader;
+        pipeline_desc.fs = blit_frag_shader;
+        pipeline_desc.il = &input_layout;
+        pipeline_desc.bs = &blend_state;
+        pipeline_desc.rs = &rasterizer_state;
+        pipeline_desc.dss = &depth_stencil_state;
+        pipeline_desc.primitive_topo = blast::PRIMITIVE_TOPO_TRI_LIST;
+        blit_pipeline = g_device->CreatePipeline(pipeline_desc);
+    }
+
+    // 创建scene管线
+    {
+        if (scene_pipeline) {
+            g_device->DestroyPipeline(scene_pipeline);
+        }
+
+        blast::GfxPipelineDesc pipeline_desc;
+        pipeline_desc.rp = scene_renderpass;
+        pipeline_desc.vs = scene_vert_shader;
+        pipeline_desc.fs = scene_frag_shader;
+        pipeline_desc.il = &input_layout;
+        pipeline_desc.bs = &blend_state;
+        pipeline_desc.rs = &rasterizer_state;
+        pipeline_desc.dss = &depth_stencil_state;
+        pipeline_desc.primitive_topo = blast::PRIMITIVE_TOPO_TRI_LIST;
+        pipeline_desc.sample_count = g_sample_count;
+        scene_pipeline = g_device->CreatePipeline(pipeline_desc);
+    }
 }
 
 static std::pair<blast::GfxShader*, blast::GfxShader*> CompileShaderProgram(const std::string& vs_path, const std::string& fs_path) {

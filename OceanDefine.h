@@ -9,6 +9,8 @@ static float gInfinity = std::numeric_limits<float>::infinity();
 static float gNegInfinity = -gInfinity;
 static float gEpsilon = std::numeric_limits<float>::epsilon();
 
+#define PI 3.1415926
+
 #define SAFE_DELETE(x) \
     { \
         delete x; \
@@ -50,4 +52,10 @@ struct MurmurHash {
         static_assert(0 == (sizeof(key) & 3u), "Hashing requires a size that is a multiple of 4.");
         return murmur3((const uint32_t*) &key, sizeof(key) / 4, 0);
     }
+};
+
+struct Vertex {
+    float pos[3];
+    float normal[3];
+    float uv[2];
 };

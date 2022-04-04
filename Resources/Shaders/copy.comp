@@ -1,0 +1,11 @@
+#version 450 core
+
+layout (local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 2000, rg32f) uniform image2D source_texture;
+layout(binding = 2001, rg32f) uniform image2D dest_texture;
+
+void main() {
+    vec4 source = imageLoad(source_texture, ivec2(gl_GlobalInvocationID.xy));
+    imageStore(dest_texture, ivec2(gl_GlobalInvocationID.xy), source);
+}
