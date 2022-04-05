@@ -1,0 +1,67 @@
+#version 450 core
+
+layout (local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 2000, rg32f) uniform image2D pass_texture_0;
+layout(binding = 2001, rg32f) uniform image2D pass_texture_1;
+
+struct LookUp {
+    int j1;
+    int j2;
+    float wr;
+    float wi;
+};
+
+layout(set = 0, binding = 2002, std430) restrict readonly buffer ButterflyLookupTable {
+    LookUp data[];
+} butterfly_lookup_table;
+
+layout(push_constant) uniform Params {
+    int size;
+    int pass;
+    bool ping_pong;
+    bool is_horizontal;
+} params;
+
+vec2 ComplexMult(vec2 a, vec2 b) {
+    return vec2(a.r * b.r - a.g * b.g, a.r * b.g + a.g * b.r);
+}
+
+void main() {
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+    if (params.is_horizontal) {
+        uint bft_idx = id.x + (params.pass * params.size);
+        int j1 = butterfly_lookup_table.data[bft_idx].j1;
+        int j2 = butterfly_lookup_table.data[bft_idx].j2;
+        float wr = butterfly_lookup_table.data[bft_idx].wr;
+        float wi = butterfly_lookup_table.data[bft_idx].wi;
+        if (params.ping_pong) {
+            vec2 g = imageLoad(pass_texture_0, ivec2(j1, id.y)).rg;
+            vec2 h = imageLoad(pass_texture_0, ivec2(j2, id.y)).rg;
+            vec2 r = g + ComplexMult(vec2(wr, wi), h);
+            imageStore(pass_texture_1, id, vec4(r, 0.0, 0.0));
+        } else {
+            vec2 g = imageLoad(pass_texture_1, ivec2(j1, id.y)).rg;
+            vec2 h = imageLoad(pass_texture_1, ivec2(j2, id.y)).rg;
+            vec2 r = g + ComplexMult(vec2(wr, wi), h);
+            imageStore(pass_texture_0, id, vec4(r, 0.0, 0.0));
+        }
+    } else {
+        uint bft_idx = id.y + (params.pass * params.size);
+        int j1 = butterfly_lookup_table.data[bft_idx].j1;
+        int j2 = butterfly_lookup_table.data[bft_idx].j2;
+        float wr = butterfly_lookup_table.data[bft_idx].wr;
+        float wi = butterfly_lookup_table.data[bft_idx].wi;
+        if (params.ping_pong) {
+            vec2 g = imageLoad(pass_texture_0, ivec2(id.x, j1)).rg;
+            vec2 h = imageLoad(pass_texture_0, ivec2(id.x, j2)).rg;
+            vec2 r = g + ComplexMult(vec2(wr, wi), h);
+            imageStore(pass_texture_1, id, vec4(r, 0.0, 0.0));
+        } else {
+            vec2 g = imageLoad(pass_texture_1, ivec2(id.x, j1)).rg;
+            vec2 h = imageLoad(pass_texture_1, ivec2(id.x, j2)).rg;
+            vec2 r = g + ComplexMult(vec2(wr, wi), h);
+            imageStore(pass_texture_0, id, vec4(r, 0.0, 0.0));
+        }
+    }
+}

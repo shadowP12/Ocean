@@ -8,6 +8,8 @@
 
 struct FourierTransformDesc {
     blast::GfxDevice* device;
+    blast::GfxShader* copy_shader;
+    blast::GfxShader* fft_shader;
     int size;
 };
 
@@ -29,6 +31,8 @@ private:
     int size = 0;
     int passes = 0;
     blast::GfxDevice* device = nullptr;
+    blast::GfxShader* copy_shader;
+    blast::GfxShader* fft_shader;
     blast::GfxTexture* pass_texture0 = nullptr;
     blast::GfxTexture* pass_texture1 = nullptr;
     blast::GfxBuffer* butterfly_lookup_table = nullptr;

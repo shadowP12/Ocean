@@ -130,6 +130,9 @@ int main() {
         copy_shader = CompileComputeShader(ProjectDir + "/Resources/Shaders/copy.comp");
     }
     {
+        fft_shader = CompileComputeShader(ProjectDir + "/Resources/Shaders/fft.comp");
+    }
+    {
         luminance_shader = CompileComputeShader(ProjectDir + "/Resources/Shaders/luminance.comp");
     }
 
@@ -390,6 +393,7 @@ int main() {
     g_device->DestroyShader(scene_vert_shader);
     g_device->DestroyShader(scene_frag_shader);
     g_device->DestroyShader(copy_shader);
+    g_device->DestroyShader(fft_shader);
     g_device->DestroyShader(luminance_shader);
 
     if (scene_renderpass) {

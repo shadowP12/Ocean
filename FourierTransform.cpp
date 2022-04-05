@@ -1,6 +1,13 @@
 #include "FourierTransform.h"
 #include "OceanDefine.h"
 
+struct FFTParam {
+    int size;
+    int pass;
+    bool ping_pong;
+    bool is_horizontal;
+};
+
 int BitReverse(int i, int size) {
     int j = i;
     int sum = 0;
@@ -19,6 +26,8 @@ int BitReverse(int i, int size) {
 FourierTransform::FourierTransform(const FourierTransformDesc& desc) {
     size = desc.size;
     device = desc.device;
+    copy_shader = desc.copy_shader;
+    fft_shader = desc.fft_shader;
     passes = (int)(log(size) / log(2));
 
     blast::GfxTextureDesc texture_desc;
@@ -91,5 +100,81 @@ FourierTransform::~FourierTransform() {
 }
 
 void FourierTransform::Execute(blast::GfxCommandBuffer* cmd, blast::GfxTexture* in, blast::GfxTexture* out) {
+    blast::GfxTextureBarrier texture_barriers[2];
+    texture_barriers[0].texture = in;
+    texture_barriers[0].new_state = blast::RESOURCE_STATE_UNORDERED_ACCESS;
+    texture_barriers[1].texture = out;
+    texture_barriers[1].new_state = blast::RESOURCE_STATE_UNORDERED_ACCESS;
+    device->SetBarrier(cmd, 0, nullptr, 2, texture_barriers);
 
+    // Copy To In
+    device->BindComputeShader(cmd, copy_shader);
+
+    device->BindUAV(cmd, in, 0);
+
+    device->BindUAV(cmd, pass_texture0, 1);
+
+    device->Dispatch(cmd, std::max(1u, (uint32_t)(size) / 16), std::max(1u, (uint32_t)(size) / 16), 1);
+
+    FFTParam fft_param;
+    fft_param.size = size;
+    fft_param.pass = 0;
+    fft_param.ping_pong = false;
+    fft_param.is_horizontal = true;
+
+    //Horizontal Step
+    for (int i = 0; i < passes; ++i) {
+        fft_param.pass = i;
+        fft_param.ping_pong = !fft_param.ping_pong;
+
+        device->BindComputeShader(cmd, fft_shader);
+
+        device->BindUAV(cmd, pass_texture0, 0);
+
+        device->BindUAV(cmd, pass_texture1, 1);
+
+        device->BindUAV(cmd, butterfly_lookup_table, 2);
+
+        device->PushConstants(cmd, &fft_param, sizeof(FFTParam));
+
+        device->Dispatch(cmd, std::max(1u, (uint32_t)(size) / 16), std::max(1u, (uint32_t)(size) / 16), 1);
+    }
+
+    //Vertical Step
+    fft_param.is_horizontal = false;
+    for (int i = 0; i < passes; ++i) {
+        fft_param.pass = i;
+        fft_param.ping_pong = !fft_param.ping_pong;
+
+        device->BindComputeShader(cmd, fft_shader);
+
+        device->BindUAV(cmd, pass_texture0, 0);
+
+        device->BindUAV(cmd, pass_texture1, 1);
+
+        device->BindUAV(cmd, butterfly_lookup_table, 2);
+
+        device->PushConstants(cmd, &fft_param, sizeof(FFTParam));
+
+        device->Dispatch(cmd, std::max(1u, (uint32_t)(size) / 16), std::max(1u, (uint32_t)(size) / 16), 1);
+    }
+
+    // Copy To Out
+    device->BindComputeShader(cmd, copy_shader);
+
+    if (fft_param.ping_pong) {
+        device->BindUAV(cmd, pass_texture1, 0);
+    } else {
+        device->BindUAV(cmd, pass_texture0, 0);
+    }
+
+    device->BindUAV(cmd, out, 1);
+
+    device->Dispatch(cmd, std::max(1u, (uint32_t)(size) / 16), std::max(1u, (uint32_t)(size) / 16), 1);
+
+    texture_barriers[0].texture = in;
+    texture_barriers[0].new_state = blast::RESOURCE_STATE_SHADER_RESOURCE;
+    texture_barriers[1].texture = out;
+    texture_barriers[1].new_state = blast::RESOURCE_STATE_SHADER_RESOURCE;
+    device->SetBarrier(cmd, 0, nullptr, 2, texture_barriers);
 }
