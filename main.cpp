@@ -1,4 +1,5 @@
 #include "OceanDefine.h"
+#include "FourierTransform.h"
 
 #include <Blast/Gfx/GfxDefine.h>
 #include <Blast/Gfx/GfxDevice.h>
@@ -76,11 +77,14 @@ blast::GfxSampler* linear_sampler = nullptr;
 blast::GfxSampler* nearest_sampler = nullptr;
 
 blast::GfxTexture* test_texture = nullptr;
+blast::GfxTexture* luminance_texture = nullptr;
 blast::GfxTexture* result_texture = nullptr;
 
 blast::GfxBuffer* object_ub = nullptr;
 
 blast::SampleCount g_sample_count = blast::SAMPLE_COUNT_4;
+
+FourierTransform* fft = nullptr;
 
 struct ObjectUniforms {
     glm::mat4 model_matrix;
@@ -202,6 +206,7 @@ int main() {
         texture_desc.mem_usage = blast::MEMORY_USAGE_GPU_ONLY;
         texture_desc.res_usage = blast::RESOURCE_USAGE_SHADER_RESOURCE | blast::RESOURCE_USAGE_UNORDERED_ACCESS;
         result_texture = g_device->CreateTexture(texture_desc);
+        luminance_texture = g_device->CreateTexture(texture_desc);
     }
 
     std::vector<ObjectUniforms> object_storages(2);
@@ -213,9 +218,16 @@ int main() {
         object_ub = g_device->CreateBuffer(buffer_desc);
     }
 
+    FourierTransformDesc fft_desc;
+    fft_desc.size = 512;
+    fft_desc.device = g_device;
+    fft_desc.copy_shader = copy_shader;
+    fft_desc.fft_shader = fft_shader;
+    fft = new FourierTransform(fft_desc);
+
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(800, 800, "Lightmapper", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(512, 512, "Lightmapper", nullptr, nullptr);
     glfwSetCursorPosCallback(window, CursorPositionCallback);
     glfwSetMouseButtonCallback(window, MouseButtonCallback);
     glfwSetScrollCallback(window, MouseScrollCallback);
@@ -260,7 +272,7 @@ int main() {
             blast::GfxTextureBarrier texture_barriers[2];
             texture_barriers[0].texture = test_texture;
             texture_barriers[0].new_state = blast::RESOURCE_STATE_UNORDERED_ACCESS;
-            texture_barriers[1].texture = result_texture;
+            texture_barriers[1].texture = luminance_texture;
             texture_barriers[1].new_state = blast::RESOURCE_STATE_UNORDERED_ACCESS;
             g_device->SetBarrier(cmd, 0, nullptr, 2, texture_barriers);
 
@@ -268,17 +280,20 @@ int main() {
 
             g_device->BindUAV(cmd, test_texture, 0);
 
-            g_device->BindUAV(cmd, result_texture, 1);
+            g_device->BindUAV(cmd, luminance_texture, 1);
 
             g_device->Dispatch(cmd, std::max(1u, (uint32_t)(test_texture->desc.width) / 16), std::max(1u, (uint32_t)(test_texture->desc.height) / 16), 1);
 
             texture_barriers[0].texture = test_texture;
             texture_barriers[0].new_state = blast::RESOURCE_STATE_SHADER_RESOURCE;
-            texture_barriers[1].texture = result_texture;
+            texture_barriers[1].texture = luminance_texture;
             texture_barriers[1].new_state = blast::RESOURCE_STATE_SHADER_RESOURCE;
             g_device->SetBarrier(cmd, 0, nullptr, 2, texture_barriers);
 
         }
+
+        // fft
+        fft->Execute(cmd, luminance_texture, result_texture);
 
         // draw scene
         {
@@ -420,11 +435,14 @@ int main() {
     g_device->DestroySampler(nearest_sampler);
 
     g_device->DestroyTexture(test_texture);
+    g_device->DestroyTexture(luminance_texture);
     g_device->DestroyTexture(result_texture);
 
     g_device->DestroyBuffer(object_ub);
 
     g_device->DestroySwapChain(g_swapchain);
+
+    SAFE_DELETE(fft);
 
     SAFE_DELETE(g_device);
     SAFE_DELETE(g_shader_compiler);

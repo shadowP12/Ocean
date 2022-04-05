@@ -19,8 +19,8 @@ layout(set = 0, binding = 2002, std430) restrict readonly buffer ButterflyLookup
 layout(push_constant) uniform Params {
     int size;
     int pass;
-    bool ping_pong;
-    bool is_horizontal;
+    int ping_pong;
+    int is_horizontal;
 } params;
 
 vec2 ComplexMult(vec2 a, vec2 b) {
@@ -29,13 +29,13 @@ vec2 ComplexMult(vec2 a, vec2 b) {
 
 void main() {
     ivec2 id = ivec2(gl_GlobalInvocationID.xy);
-    if (params.is_horizontal) {
+    if (params.is_horizontal == 1) {
         uint bft_idx = id.x + (params.pass * params.size);
         int j1 = butterfly_lookup_table.data[bft_idx].j1;
         int j2 = butterfly_lookup_table.data[bft_idx].j2;
         float wr = butterfly_lookup_table.data[bft_idx].wr;
         float wi = butterfly_lookup_table.data[bft_idx].wi;
-        if (params.ping_pong) {
+        if (params.ping_pong == 1) {
             vec2 g = imageLoad(pass_texture_0, ivec2(j1, id.y)).rg;
             vec2 h = imageLoad(pass_texture_0, ivec2(j2, id.y)).rg;
             vec2 r = g + ComplexMult(vec2(wr, wi), h);
@@ -52,7 +52,7 @@ void main() {
         int j2 = butterfly_lookup_table.data[bft_idx].j2;
         float wr = butterfly_lookup_table.data[bft_idx].wr;
         float wi = butterfly_lookup_table.data[bft_idx].wi;
-        if (params.ping_pong) {
+        if (params.ping_pong == 1) {
             vec2 g = imageLoad(pass_texture_0, ivec2(id.x, j1)).rg;
             vec2 h = imageLoad(pass_texture_0, ivec2(id.x, j2)).rg;
             vec2 r = g + ComplexMult(vec2(wr, wi), h);

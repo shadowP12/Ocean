@@ -4,8 +4,8 @@
 struct FFTParam {
     int size;
     int pass;
-    bool ping_pong;
-    bool is_horizontal;
+    int ping_pong;
+    int is_horizontal;
 };
 
 int BitReverse(int i, int size) {
@@ -100,12 +100,16 @@ FourierTransform::~FourierTransform() {
 }
 
 void FourierTransform::Execute(blast::GfxCommandBuffer* cmd, blast::GfxTexture* in, blast::GfxTexture* out) {
-    blast::GfxTextureBarrier texture_barriers[2];
+    blast::GfxTextureBarrier texture_barriers[4];
     texture_barriers[0].texture = in;
     texture_barriers[0].new_state = blast::RESOURCE_STATE_UNORDERED_ACCESS;
     texture_barriers[1].texture = out;
     texture_barriers[1].new_state = blast::RESOURCE_STATE_UNORDERED_ACCESS;
-    device->SetBarrier(cmd, 0, nullptr, 2, texture_barriers);
+    texture_barriers[2].texture = pass_texture0;
+    texture_barriers[2].new_state = blast::RESOURCE_STATE_UNORDERED_ACCESS;
+    texture_barriers[3].texture = pass_texture1;
+    texture_barriers[3].new_state = blast::RESOURCE_STATE_UNORDERED_ACCESS;
+    device->SetBarrier(cmd, 0, nullptr, 4, texture_barriers);
 
     // Copy To In
     device->BindComputeShader(cmd, copy_shader);
