@@ -23,13 +23,12 @@ int BitReverse(int i, int size) {
     return sum;
 }
 
-FourierTransform::FourierTransform(const FourierTransformDesc& desc) {
-    size = desc.size;
-    device = desc.device;
-    copy_shader = desc.copy_shader;
-    fft_shader = desc.fft_shader;
+FourierTransform::FourierTransform(Context* in_context, int in_size) {
+    size = in_size;
+    context = in_context;
     passes = (int)(log(size) / log(2));
 
+    blast::GfxDevice* device = context->device;
     blast::GfxTextureDesc texture_desc;
     texture_desc.width = size;
     texture_desc.height = size;
@@ -94,12 +93,15 @@ FourierTransform::FourierTransform(const FourierTransformDesc& desc) {
 }
 
 FourierTransform::~FourierTransform() {
+    blast::GfxDevice* device = context->device;
     device->DestroyTexture(pass_texture0);
     device->DestroyTexture(pass_texture1);
     device->DestroyBuffer(butterfly_lookup_table);
 }
 
 void FourierTransform::Execute(blast::GfxCommandBuffer* cmd, blast::GfxTexture* in, blast::GfxTexture* out) {
+    blast::GfxDevice* device = context->device;
+
     blast::GfxTextureBarrier texture_barriers[4];
     texture_barriers[0].texture = in;
     texture_barriers[0].new_state = blast::RESOURCE_STATE_UNORDERED_ACCESS;
@@ -112,7 +114,7 @@ void FourierTransform::Execute(blast::GfxCommandBuffer* cmd, blast::GfxTexture* 
     device->SetBarrier(cmd, 0, nullptr, 4, texture_barriers);
 
     // Copy To In
-    device->BindComputeShader(cmd, copy_shader);
+    device->BindComputeShader(cmd, context->copy_shader);
 
     device->BindUAV(cmd, in, 0);
 
@@ -131,7 +133,7 @@ void FourierTransform::Execute(blast::GfxCommandBuffer* cmd, blast::GfxTexture* 
         fft_param.pass = i;
         fft_param.ping_pong = !fft_param.ping_pong;
 
-        device->BindComputeShader(cmd, fft_shader);
+        device->BindComputeShader(cmd, context->fft_shader);
 
         device->BindUAV(cmd, pass_texture0, 0);
 
@@ -150,7 +152,7 @@ void FourierTransform::Execute(blast::GfxCommandBuffer* cmd, blast::GfxTexture* 
         fft_param.pass = i;
         fft_param.ping_pong = !fft_param.ping_pong;
 
-        device->BindComputeShader(cmd, fft_shader);
+        device->BindComputeShader(cmd, context->fft_shader);
 
         device->BindUAV(cmd, pass_texture0, 0);
 
@@ -164,7 +166,7 @@ void FourierTransform::Execute(blast::GfxCommandBuffer* cmd, blast::GfxTexture* 
     }
 
     // Copy To Out
-    device->BindComputeShader(cmd, copy_shader);
+    device->BindComputeShader(cmd, context->copy_shader);
 
     if (fft_param.ping_pong) {
         device->BindUAV(cmd, pass_texture1, 0);

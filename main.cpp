@@ -86,6 +86,8 @@ blast::SampleCount g_sample_count = blast::SAMPLE_COUNT_4;
 
 FourierTransform* fft = nullptr;
 
+Context* g_context = nullptr;
+
 struct ObjectUniforms {
     glm::mat4 model_matrix;
     glm::mat4 view_matrix;
@@ -141,6 +143,11 @@ int main() {
     }
 
     blast::GfxCommandBuffer* copy_cmd = g_device->RequestCommandBuffer(blast::QUEUE_COPY);
+
+    g_context = new Context;
+    g_context->device = g_device;
+    g_context->fft_shader = fft_shader;
+    g_context->copy_shader = copy_shader;
 
     // load quad buffers
     {
@@ -218,12 +225,7 @@ int main() {
         object_ub = g_device->CreateBuffer(buffer_desc);
     }
 
-    FourierTransformDesc fft_desc;
-    fft_desc.size = 512;
-    fft_desc.device = g_device;
-    fft_desc.copy_shader = copy_shader;
-    fft_desc.fft_shader = fft_shader;
-    fft = new FourierTransform(fft_desc);
+    fft = new FourierTransform(g_context, 512);
 
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -443,6 +445,8 @@ int main() {
     g_device->DestroySwapChain(g_swapchain);
 
     SAFE_DELETE(fft);
+
+    SAFE_DELETE(g_context);
 
     SAFE_DELETE(g_device);
     SAFE_DELETE(g_shader_compiler);
@@ -671,3 +675,4 @@ static void MouseButtonCallback(GLFWwindow* window, int button, int action, int 
 static void MouseScrollCallback(GLFWwindow* window, double offset_x, double offset_y) {
     camera.position += camera.front * (float)offset_y * 0.1f;
 }
+

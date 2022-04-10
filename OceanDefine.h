@@ -1,5 +1,8 @@
 #pragma once
 
+#include <Blast/Gfx/GfxDefine.h>
+#include <Blast/Gfx/GfxDevice.h>
+
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm.hpp>
 #include <gtx/quaternion.hpp>
@@ -58,4 +61,10 @@ struct Vertex {
     float pos[3];
     float normal[3];
     float uv[2];
+};
+
+struct Context {
+    blast::GfxDevice* device;
+    blast::GfxShader* copy_shader;
+    blast::GfxShader* fft_shader;
 };

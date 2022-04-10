@@ -1,21 +1,16 @@
 #pragma once
 
+#include "OceanDefine.h"
+
 #include <Blast/Gfx/GfxDefine.h>
 #include <Blast/Gfx/GfxDevice.h>
 
 #include <glm.hpp>
 #include <gtc/matrix_transform.hpp>
 
-struct FourierTransformDesc {
-    blast::GfxDevice* device;
-    blast::GfxShader* copy_shader;
-    blast::GfxShader* fft_shader;
-    int size;
-};
-
 class FourierTransform {
 public:
-    FourierTransform(const FourierTransformDesc& desc);
+    FourierTransform(Context* context, int size);
 
     ~FourierTransform();
 
@@ -30,9 +25,7 @@ private:
 private:
     int size = 0;
     int passes = 0;
-    blast::GfxDevice* device = nullptr;
-    blast::GfxShader* copy_shader;
-    blast::GfxShader* fft_shader;
+    Context* context = nullptr;
     blast::GfxTexture* pass_texture0 = nullptr;
     blast::GfxTexture* pass_texture1 = nullptr;
     blast::GfxBuffer* butterfly_lookup_table = nullptr;

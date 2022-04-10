@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 14)
 
 add_definitions(-DPROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
-add_executable(Ocean main.cpp FourierTransform.cpp)
+add_executable(Ocean main.cpp FourierTransform.cpp WavesGenerator.cpp)
 
 # glfw
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/External/glfw EXCLUDE_FROM_ALL glfw.out)
