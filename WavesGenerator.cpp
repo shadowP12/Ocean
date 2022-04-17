@@ -1,5 +1,7 @@
 #include "WavesGenerator.h"
 
+#define USE_GPU_FFT 0
+
 WavesGenerator::WavesGenerator(Context* in_context, int in_size, int in_length) {
     context = in_context;
     size = in_size;
@@ -27,7 +29,12 @@ WavesGenerator::WavesGenerator(Context* in_context, int in_size, int in_length) 
         }
     }
 
+#if USE_GPU_FFT
     fft = new FourierTransform(context, size);
+#else
+    fft_out = new glm::vec2[size * size];
+    fft_plan = am_fft_plan_2d(0, size, size);
+#endif
 
     blast::GfxTextureDesc texture_desc;
     texture_desc.width = size;
@@ -43,6 +50,14 @@ WavesGenerator::~WavesGenerator() {
     SAFE_DELETE_ARRAY(height_data);
     SAFE_DELETE_ARRAY(spectrum);
     SAFE_DELETE_ARRAY(spectrum_conj);
+
+#if USE_GPU_FFT
+    fft = new FourierTransform(context, size);
+#else
+    SAFE_DELETE_ARRAY(fft_out);
+    am_fft_plan_2d_free(fft_plan);
+#endif
+
     SAFE_DELETE(fft);
     context->device->DestroyTexture(height_map);
 }
@@ -108,21 +123,20 @@ glm::vec2 WavesGenerator::UpdateSpectrum(float t, int n, int m) {
 }
 
 void WavesGenerator::Update(blast::GfxCommandBuffer* cmd , float t) {
-    float kx, kz, len, lambda = -1.0f;
-    int index, index1;
+    float kx, kz;
+    int index;
 
     for (int n = 0; n < size; n++) {
         kx = PI * (2.0f * n - size) / length;
 
         for (int m = 0; m < size; m++) {
             kz = PI*(2 * m - size) / length;
-            len = glm::sqrt(kx * kx + kz * kz);
             index = n * size + m;
-
             height_data[index] = UpdateSpectrum(t, n, m);
         }
     }
 
+#if USE_GPU_FFT
     blast::GfxTextureBarrier barrier;
     barrier.texture = height_map;
     barrier.new_state = blast::RESOURCE_STATE_COPY_DEST;
@@ -135,4 +149,18 @@ void WavesGenerator::Update(blast::GfxCommandBuffer* cmd , float t) {
     context->device->SetBarrier(cmd, 0, nullptr, 1, &barrier);
 
     fft->Execute(cmd, height_map, height_map);
+#else
+    am_fft_2d(fft_plan, (am_fft_complex_t*)height_data, (am_fft_complex_t*)fft_out);
+
+    blast::GfxTextureBarrier barrier;
+    barrier.texture = height_map;
+    barrier.new_state = blast::RESOURCE_STATE_COPY_DEST;
+    context->device->SetBarrier(cmd, 0, nullptr, 1, &barrier);
+
+    context->device->UpdateTexture(cmd, height_map, fft_out);
+
+    barrier.texture = height_map;
+    barrier.new_state = blast::RESOURCE_STATE_SHADER_RESOURCE;
+    context->device->SetBarrier(cmd, 0, nullptr, 1, &barrier);
+#endif
 }

@@ -42,4 +42,7 @@ private:
     blast::GfxTexture* height_map = nullptr;
     Context* context = nullptr;
     FourierTransform* fft = nullptr;
+
+    glm::vec2* fft_out = nullptr;
+    am_fft_plan_2d_t* fft_plan = nullptr;
 };

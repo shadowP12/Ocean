@@ -15,6 +15,10 @@ target_link_libraries(Ocean PRIVATE glfw)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/External/Blast Blast.out)
 target_link_libraries(Ocean PUBLIC Blast)
 
+# am_fft
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/External/am_fft am_fft.out)
+target_link_libraries(Ocean PRIVATE am_fft)
+
 # glm
 add_library(glm INTERFACE)
 target_compile_definitions(glm INTERFACE GLM_FORCE_DEPTH_ZERO_TO_ONE=1)

@@ -8,6 +8,8 @@
 #include <gtx/quaternion.hpp>
 #include <gtc/matrix_transform.hpp>
 
+#include <am_fft.h>
+
 static float gInfinity = std::numeric_limits<float>::infinity();
 static float gNegInfinity = -gInfinity;
 static float gEpsilon = std::numeric_limits<float>::epsilon();
