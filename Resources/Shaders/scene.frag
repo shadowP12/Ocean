@@ -10,6 +10,9 @@ layout(location = 0) out vec4 out_color;
 
 void main()
 {
-    float luminance = texture(sampler2D(result_texture, linear_sampler), v_uv).r;
-    out_color = vec4(luminance);
+    // magic number to test
+    float mn = 100.0;
+
+    float r = texture(sampler2D(result_texture, linear_sampler), v_uv).r;
+    out_color = vec4(r / mn);
 }

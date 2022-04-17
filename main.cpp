@@ -1,5 +1,5 @@
 #include "OceanDefine.h"
-#include "FourierTransform.h"
+#include "WavesGenerator.h"
 
 #include <Blast/Gfx/GfxDefine.h>
 #include <Blast/Gfx/GfxDevice.h>
@@ -84,7 +84,7 @@ blast::GfxBuffer* object_ub = nullptr;
 
 blast::SampleCount g_sample_count = blast::SAMPLE_COUNT_4;
 
-FourierTransform* fft = nullptr;
+WavesGenerator* waves_generator = nullptr;
 
 Context* g_context = nullptr;
 
@@ -225,7 +225,7 @@ int main() {
         object_ub = g_device->CreateBuffer(buffer_desc);
     }
 
-    fft = new FourierTransform(g_context, 512);
+    waves_generator = new WavesGenerator(g_context, 512, 512);
 
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -236,6 +236,8 @@ int main() {
 
     int frame_width = 0, frame_height = 0;
     while (!glfwWindowShouldClose(window)) {
+        float time = glfwGetTime();
+
         glfwPollEvents();
         int window_width, window_height;
         glfwGetWindowSize(window, &window_width, &window_height);
@@ -294,8 +296,8 @@ int main() {
 
         }
 
-        // fft
-        fft->Execute(cmd, luminance_texture, result_texture);
+        // generate wave
+        waves_generator->Update(cmd, time);
 
         // draw scene
         {
@@ -330,7 +332,7 @@ int main() {
 
             g_device->BindPipeline(cmd, scene_pipeline);
 
-            g_device->BindResource(cmd, result_texture, 0);
+            g_device->BindResource(cmd, waves_generator->GetHeightMap(), 0);
 
             g_device->BindSampler(cmd, linear_sampler, 0);
 
@@ -444,7 +446,7 @@ int main() {
 
     g_device->DestroySwapChain(g_swapchain);
 
-    SAFE_DELETE(fft);
+    SAFE_DELETE(waves_generator);
 
     SAFE_DELETE(g_context);
 

@@ -68,3 +68,9 @@ struct Context {
     blast::GfxShader* copy_shader;
     blast::GfxShader* fft_shader;
 };
+
+#define RAND_MAX 0x7fff
+
+inline float UniformRandomVariable() {
+    return (float)rand()/RAND_MAX;
+}
