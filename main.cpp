@@ -229,7 +229,7 @@ int main() {
 
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(512, 512, "Lightmapper", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(512, 512, "Ocean", nullptr, nullptr);
     glfwSetCursorPosCallback(window, CursorPositionCallback);
     glfwSetMouseButtonCallback(window, MouseButtonCallback);
     glfwSetScrollCallback(window, MouseScrollCallback);
