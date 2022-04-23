@@ -1,6 +1,8 @@
 #include "FourierTransform.h"
 #include "OceanDefine.h"
 
+#define USE_FFT_V2 0
+
 struct FFTParam {
     int size;
     int pass;

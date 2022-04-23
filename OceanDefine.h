@@ -14,7 +14,7 @@ static float gInfinity = std::numeric_limits<float>::infinity();
 static float gNegInfinity = -gInfinity;
 static float gEpsilon = std::numeric_limits<float>::epsilon();
 
-#define PI 3.1415926
+#define PI 3.14159265358979323846
 
 #define SAFE_DELETE(x) \
     { \

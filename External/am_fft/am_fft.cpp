@@ -358,7 +358,9 @@ void am_fft_2d(const am_fft_plan_2d_t *plan, const am_fft_complex_t *in, am_fft_
 			am_fft_1d(plans[i], ins[i] + y * n, outs[i] + y * n);
 
 		if (plans[0]->n == plans[1]->n)
-			am_fft_transpose_square(outs[i], n);
+		{
+            am_fft_transpose_square(outs[i], n);
+		}
 		else
 		{
 			// TODO: Transpose non-square matrices!

@@ -1,6 +1,6 @@
 #include "WavesGenerator.h"
 
-#define USE_GPU_FFT 0
+#define USE_GPU_FFT 1
 
 WavesGenerator::WavesGenerator(Context* in_context, int in_size, int in_length) {
     context = in_context;
@@ -52,13 +52,11 @@ WavesGenerator::~WavesGenerator() {
     SAFE_DELETE_ARRAY(spectrum_conj);
 
 #if USE_GPU_FFT
-    fft = new FourierTransform(context, size);
+    SAFE_DELETE(fft);
 #else
     SAFE_DELETE_ARRAY(fft_out);
     am_fft_plan_2d_free(fft_plan);
 #endif
-
-    SAFE_DELETE(fft);
     context->device->DestroyTexture(height_map);
 }
 
@@ -135,6 +133,12 @@ void WavesGenerator::Update(blast::GfxCommandBuffer* cmd , float t) {
             height_data[index] = UpdateSpectrum(t, n, m);
         }
     }
+
+    // Test
+    height_data[0] = glm::vec2(1.0, 0.0);
+    height_data[1] = glm::vec2(1.0, 0.0);
+    height_data[2] = glm::vec2(1.0, 0.0);
+    height_data[3] = glm::vec2(1.0, 0.0);
 
 #if USE_GPU_FFT
     blast::GfxTextureBarrier barrier;
